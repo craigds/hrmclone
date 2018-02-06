@@ -1,0 +1,24 @@
+[[source]]
+
+name = "pypi"
+url = "https://pypi.python.org/simple"
+verify_ssl = true
+
+
+[dev-packages]
+
+# https://github.com/pytest-dev/pytest/issues/3170
+pytest = "<=3.3.2"
+pytest-sugar = "*"
+ipdb = "*"
+ipython = "*"
+
+
+[requires]
+
+python_version = "3.6"
+
+
+[packages]
+
+"e1839a8" = {editable = true, path = "."}
