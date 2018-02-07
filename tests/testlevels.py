@@ -265,4 +265,47 @@ def test_level_14_maximization_room():
         ADD      0
         JUMP     b
     ''')
-    todo?
+    run = program.run(inbox=['1', '2', '-4', '-4', '9', '-3', '5', '0'])
+    assert run.outbox == ['2', '-4', '9', '5']
+    assert run.floor[0] == '5'
+
+
+def test_comments():
+    program = Program('''
+        COMMENT 0
+        DEFINE COMMENT 0
+        aowiefj0
+        baoiehwoinwef02fn+[]123n;
+        DEFINE COMMENT 1
+        OUTBOX
+        INBOX
+        OUTBOX;
+    ''')
+    assert program.comment_data == {
+        0: 'aowiefj0baoiehwoinwef02fn+[]123n',
+        1: 'OUTBOXINBOXOUTBOX',
+    }
+
+    run = program.run(inbox=['a'])
+    assert run.runtime == 0
+    assert run.inbox == ['a']
+
+
+def test_labels():
+    program = Program('''
+        DEFINE LABEL 0
+        aowiefj0
+        baoiehwoinwef02fn+[]123n;
+        DEFINE LABEL 1
+        OUTBOX
+        INBOX
+        OUTBOX;
+    ''')
+    assert program.label_data == {
+        0: 'aowiefj0baoiehwoinwef02fn+[]123n',
+        1: 'OUTBOXINBOXOUTBOX',
+    }
+
+    run = program.run(inbox=['a'])
+    assert run.runtime == 0
+    assert run.inbox == ['a']

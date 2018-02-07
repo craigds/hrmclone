@@ -9,11 +9,15 @@ class NoSuchInstruction(ParseError):
     pass
 
 
-class InvalidJumpTarget(ParseError):
+class InvalidArgument(ParseError):
     pass
 
 
-class InvalidFloorIndex(ParseError):
+class InvalidJumpTarget(InvalidArgument):
+    pass
+
+
+class InvalidFloorIndex(InvalidArgument):
     pass
 
 

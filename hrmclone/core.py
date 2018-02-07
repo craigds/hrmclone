@@ -16,7 +16,7 @@ class InstructionRegistry(type):
     def __new__(meta, name, bases, classdict):
         klass = super().__new__(meta, name, bases, classdict)
         if not name.startswith('_'):
-            command_text = name.lower()
+            command_text = name.lower().replace('_', ' ')
             meta.instructions[command_text] = klass
         return klass
 
@@ -42,7 +42,7 @@ class Instruction(object, metaclass=InstructionRegistry):
 
         return klass(*arguments)
 
-    def parse_extra_lines(self, lines_iter):
+    def parse_extra_lines(self, program, lines_iter):
         """
         For most instructions this does nothing.
 
@@ -183,12 +183,63 @@ class Sub(Add):
         return super()._add(a, -b_int)
 
 
+class _Noop(Instruction):
+    def execute(self, program):
+        # Do nothing.
+        # Don't count this as an executed instruction
+        program.runtime -= 1
+
+
+class Comment(_Noop):
+    def __init__(self, comment_key):
+        # This is a key into program.comment_data,
+        # But that dict will be empty until validate() time.
+        self.comment_key = int(comment_key)
+
+    def validate(self, program):
+        if self.comment_key not in program.comment_data:
+            raise exceptions.InvalidArgument
+
+
+class _ExtraLines(_Noop):
+    def _parse_extra_lines(self, program, lines_iter):
+        line = ''
+        data = ''
+        while True:
+            line = next(lines_iter)
+            if not line:
+                # EOF !?
+                raise exceptions.ParseError(
+                    "Reached EOF while processing DEFINE COMMENT. Should end with a ';'"
+                )
+            line = line.strip()
+            data += line
+            if line.endswith(';'):
+                data = data[:-1]
+                break
+        return data
+
+
+class Define_Comment(_ExtraLines):
+    def __init__(self, comment_index):
+        self.comment_index = int(comment_index)
+
+    def parse_extra_lines(self, program, lines_iter):
+        data = self._parse_extra_lines(program, lines_iter)
+        program.comment_data[self.comment_index] = data
+
+
+class Define_Label(_FloorInstruction, _ExtraLines):
+    def parse_extra_lines(self, program, lines_iter):
+        data = self._parse_extra_lines(program, lines_iter)
+        program.label_data[self.floor_index] = data
+
+
 class Program:
     """
     Represents a sequence of instructions which can be run, but has no associated state.
     """
-    @classmethod
-    def _parse(cls, text):
+    def _parse(self, text):
         line_iterator = iter(text.split('\n'))
         instructions = []
         jump_targets = {}
@@ -210,11 +261,13 @@ class Program:
             # For complex instructions ('DEFINE COMMENT') extra lines might be
             # required. Give the instruction parser access to the instruction stream
             # so it can fetch more lines if necessary.
-            instruction.parse_extra_lines(line_iterator)
+            instruction.parse_extra_lines(self, line_iterator)
             instructions.append(instruction)
         return instructions, jump_targets
 
     def __init__(self, text):
+        self.comment_data = {}
+        self.label_data = {}
         self.instructions, self.jump_targets = self._parse(text)
         for instruction in self.instructions:
             instruction.validate(self)
