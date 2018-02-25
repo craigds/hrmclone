@@ -1,10 +1,19 @@
 import re
 import string
+import sys
 
 from . import exceptions
 
 
 FLOOR_TILES = 20
+
+
+def is_int(x):
+    try:
+        int(x)
+        return True
+    except ValueError:
+        return False
 
 
 class InstructionRegistry(type):
@@ -40,7 +49,12 @@ class Instruction(object, metaclass=InstructionRegistry):
         except KeyError:
             raise exceptions.NoSuchInstruction(command.upper())
 
-        return klass(*arguments)
+        instance = klass(*arguments)
+        instance.text = line
+        return instance
+
+    def __str__(self):
+        return self.text
 
     def parse_extra_lines(self, program, lines_iter):
         """
@@ -119,7 +133,35 @@ class JumpN(Jump):
 
 class _FloorInstruction(Instruction):
     def __init__(self, floor_index):
+        self.pointer = False
+        if floor_index.startswith('['):
+            self.pointer = True
+            floor_index = floor_index[1:-1]
+
         self.floor_index = int(floor_index)
+
+    def resolve_floor_index(self, program):
+        if self.pointer:
+            # Resolve the pointer!
+            floor_index = program.floor[self.floor_index]
+            if floor_index is None:
+                # null pointer!
+                raise exceptions.EmptyFloorTile
+
+            # pointer values must be numeric
+            try:
+                floor_index = int(floor_index)
+            except ValueError:
+                raise exceptions.MathDomainError
+
+            # and point to a valid floor tile
+            if floor_index >= FLOOR_TILES or floor_index < 0:
+                raise exceptions.InvalidFloorIndex
+
+            # s'cool. cool cool cool.
+            return floor_index
+        else:
+            return self.floor_index
 
     def validate(self, program):
         if self.floor_index >= FLOOR_TILES or self.floor_index < 0:
@@ -129,58 +171,79 @@ class _FloorInstruction(Instruction):
 class CopyFrom(_FloorInstruction):
     def execute(self, program):
         program.hands = None
-        if not program.floor[self.floor_index]:
+        floor_index = self.resolve_floor_index(program)
+        if not program.floor[floor_index]:
             raise exceptions.EmptyFloorTile
-        program.hands = program.floor[self.floor_index]
+        program.hands = program.floor[floor_index]
 
 
 class CopyTo(_FloorInstruction):
     def execute(self, program):
         if not program.hands:
             raise exceptions.EmptyHands
-        program.floor[self.floor_index] = program.hands
+        floor_index = self.resolve_floor_index(program)
+        program.floor[floor_index] = program.hands
 
 
-class Add(_FloorInstruction):
-    def _add(self, a, b_int):
-        try:
-            int(a)
-        except ValueError:
-            # 'A' + '1' == 'B'
-            result = chr(ord(a) + b_int)
-            if (
-                (a in string.ascii_lowercase and result not in string.ascii_lowercase)
-                or (a in string.ascii_uppercase and result not in string.ascii_uppercase)
-            ):
-                raise exceptions.Overflow
-
-            return result
-        else:
-            # '1' + '1' == '2'
-            return str(
-                int(a) + b_int
-            )
-
+class _MathInstruction(_FloorInstruction):
     def execute(self, program):
         if program.hands is None:
             raise exceptions.EmptyHands
 
-        if not program.floor[self.floor_index]:
+        floor_index = self.resolve_floor_index(program)
+
+        if not program.floor[floor_index]:
             raise exceptions.EmptyFloorTile
 
-        operand = program.floor[self.floor_index]
+        operand = program.floor[floor_index]
 
+        program.hands = self._do_math(program.hands, operand)
+
+
+class Add(_MathInstruction):
+    def _do_math(self, a, b):
+        # You can't ADD when either operand is a letter
         try:
-            int(operand)
+            a, b = int(a), int(b)
         except ValueError:
-            raise exceptions.MathDomainError("Can't add '%s' and '%s'" % (program.hands, operand))
+            raise exceptions.MathDomainError(
+                f"Can't ADD '{a}' and '{b}'"
+            )
 
-        program.hands = self._add(program.hands, int(operand))
+        # try:
+        #     int(a)
+        # except ValueError:
+        #     # 'A' + '1' == 'B'
+        #     result = chr(ord(a) + b_int)
+        #     if (
+        #         (a in string.ascii_lowercase and result not in string.ascii_lowercase)
+        #         or (a in string.ascii_uppercase and result not in string.ascii_uppercase)
+        #     ):
+        #         raise exceptions.Overflow
+
+        #     return result
+        # else:
+        # '1' + '1' == '2'
+        return str(a + b)
 
 
 class Sub(Add):
-    def _add(self, a, b_int):
-        return super()._add(a, -b_int)
+    def _do_math(self, a, b):
+        # You can SUB when a and b are *both* numbers, or *both* letters.
+        if (is_int(a), is_int(b)) == (True, True):
+            return str(int(a) - int(b))
+        elif (is_int(a), is_int(b)) == (False, False):
+            # Convert both to integers, sum them, and convert back to chars.
+
+            if b.upper() < a.upper():
+                # You can't get a negative letter, sorry
+                raise exceptions.Overflow
+
+            return chr(ord(a.upper()) - ord(b.upper()) + ord('A'))
+        else:
+            raise exceptions.MathDomainError(
+                f"Can't SUB '{a}' and '{b}'"
+            )
 
 
 class _Noop(Instruction):
@@ -233,6 +296,26 @@ class Define_Label(_FloorInstruction, _ExtraLines):
     def parse_extra_lines(self, program, lines_iter):
         data = self._parse_extra_lines(program, lines_iter)
         program.label_data[self.floor_index] = data
+
+
+class BumpUp(_FloorInstruction):
+    amount = 1
+
+    def execute(self, program):
+        floor_index = self.resolve_floor_index(program)
+
+        if not program.floor[floor_index]:
+            raise exceptions.EmptyFloorTile
+        try:
+            val = int(program.floor[floor_index])
+        except ValueError:
+            raise exceptions.MathDomainError
+        program.floor[floor_index] = str(val + self.amount)
+        program.hands = program.floor[floor_index]
+
+
+class BumpDn(BumpUp):
+    amount = -1
 
 
 class Program:
@@ -336,6 +419,11 @@ class ProgramRun:
                 # TODO: evaluate goal state here.
                 # for now assume end of program.
                 break
+            finally:
+                print(
+                    f"{instruction}:\n\tinbox={self.inbox}\n\tfloor={self.floor}\n\toutbox={self.outbox}",
+                    file=sys.stderr
+                )
 
             self.program_pointer += 1
             self.runtime += 1

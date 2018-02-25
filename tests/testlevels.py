@@ -161,32 +161,46 @@ def test_add():
         program.run()
 
     program = Program('''
-        INBOX
+        COPYFROM 0
         ADD 1
     ''')
-    assert program.run(inbox='1', floor={1: '3'}).hands == '4'
-    assert program.run(inbox='5', floor={1: '3'}).hands == '8'
-    assert program.run(inbox='A', floor={1: '3'}).hands == 'D'
-    assert program.run(inbox='c', floor={1: '3'}).hands == 'f'
 
-    with pytest.raises(exceptions.Overflow):
-        # TODO: what's the max integer before overflow in HRM? Is it 9? 99?
-        program.run(inbox='z', floor={1: '1'})
+    # You can't ADD when either operand is a letter.
+    assert program.run(floor={0: '1', 1: '3'}).hands == '4'
+    assert program.run(floor={0: '5', 1: '-3'}).hands == '2'
+    assert program.run(floor={0: '-3', 1: '5'}).hands == '2'
+    assert program.run(floor={0: '-3', 1: '-5'}).hands == '-8'
+
+    with pytest.raises(exceptions.MathDomainError):
+        program.run(floor={0: 'A', 1: '3'})
+
+    with pytest.raises(exceptions.MathDomainError):
+        program.run(floor={0: '3', 1: 'A'})
 
     with pytest.raises(exceptions.EmptyFloorTile):
-        program.run(inbox='z')
+        program.run(floor={0: '0'})
 
 
 def test_sub():
     program = Program('''
-        INBOX
+        COPYFROM 0
         SUB 1
     ''')
-    assert program.run(inbox='1', floor={1: '3'}).hands == '-2'
-    assert program.run(inbox='1', floor={1: '-3'}).hands == '4'
-    assert program.run(inbox='1', floor={1: '0'}).hands == '1'
+
+    # You can sub two letters, or two numbers (the result is always a number)
+    # You can't sub a letter from a number, or vice versa.
+    # Also, if you sub B from A you get an error (letters can't go negative)
+    assert program.run(floor={0: '1', 1: '3'}).hands == '-2'
+    assert program.run(floor={0: '1', 1: '-3'}).hands == '4'
+    assert program.run(floor={0: '1', 1: '0'}).hands == '1'
+
     with pytest.raises(exceptions.MathDomainError):
-        assert program.run(inbox='1', floor={1: 'A'})
+        program.run(floor={0: 'A', 1: '1'})
+        program.run(floor={0: '1', 1: 'A'})
+
+    assert program.run(floor={0: 'B', 1: 'A'}).hands == '1'
+    with pytest.raises(exceptions.Overflow):
+        program.run(floor={0: 'A', 1: 'B'})
 
 
 def test_level_6_add():
@@ -309,3 +323,67 @@ def test_labels():
     run = program.run(inbox=['a'])
     assert run.runtime == 0
     assert run.inbox == ['a']
+
+
+def test_level_19_countdown():
+    program = Program('''
+        a:
+            INBOX
+            COPYTO   0
+            JUMP     c
+        b:
+            BUMPUP   0
+        c:
+        d:
+            OUTBOX
+            COPYFROM 0
+            JUMPZ    a
+            JUMPN    b
+            BUMPDN   0
+            JUMP     d
+    ''')
+
+    run = program.run(inbox=['8', '2', '0'])
+    assert run.outbox == ['8', '7', '6', '5', '4', '3', '2', '1', '0', '2', '1', '0', '0']
+
+
+def test_pointers():
+    program = Program('COPYFROM [0]')
+    assert program.run(floor={0: '8', 8: 'A'}).hands == 'A'
+
+    with pytest.raises(exceptions.EmptyFloorTile):
+        program.run()
+
+    with pytest.raises(exceptions.EmptyFloorTile):
+        program.run(floor={0: '1'})
+
+    with pytest.raises(exceptions.MathDomainError):
+        program.run(floor={0: 'A'})
+
+
+def test_level_35_duplicate_removal():
+    program = Program('''
+            INBOX
+            COPYTO   [14]
+        a:
+            COPYFROM [14]
+            OUTBOX
+            BUMPUP   14
+        b:
+            INBOX
+            COPYTO   [14]
+            COPYFROM 14
+            COPYTO   13
+        c:
+            BUMPDN   13
+            JUMPN    a
+            COPYFROM [13]
+            SUB      [14]
+            JUMPZ    b
+            JUMP     c
+    ''')
+    run = program.run(
+        inbox=['A', 'B', 'C', 'B', 'B', 'A', 'D', 'E', 'D', 'A', 'A', 'C', 'Z', 'A'],
+        floor={14: '0'},
+    )
+    assert run.outbox == ['A', 'B', 'C', 'D', 'E', 'Z']
